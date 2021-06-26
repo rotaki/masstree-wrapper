@@ -15,123 +15,198 @@
 
 class key_unparse_unsigned {
 public:
-    static int unparse_key(Masstree::key<uint64_t> key, char* buf, int buflen) {
-        return snprintf(buf, buflen, "%" PRIu64, key.ikey());
-    }
+  static int unparse_key(Masstree::key<uint64_t> key, char *buf, int buflen) {
+    return snprintf(buf, buflen, "%" PRIu64, key.ikey());
+  }
 };
-
-template<typename T>
-class MasstreeWrapper {
+template <typename T> class MasstreeWrapper {
 public:
-    struct table_params : public Masstree::nodeparams<15, 15> {
-        using value_type = T*;
-        using value_print_type = Masstree::value_print<value_type>;
-        using threadinfo_type = threadinfo;
-        using key_unparse_type = key_unparse_unsigned;
-    };
+  struct table_params : public Masstree::nodeparams<15, 15> {
+    using value_type = T *;
+    using value_print_type = Masstree::value_print<value_type>;
+    using threadinfo_type = threadinfo;
+    using key_unparse_type = key_unparse_unsigned;
+  };
 
-    using Str = Masstree::Str;
-    using table_type = Masstree::basic_table<table_params>;
-    using unlocked_cursor_type = Masstree::unlocked_tcursor<table_params>;
-    using cursor_type = Masstree::tcursor<table_params>;
-    using leaf_type = Masstree::leaf<table_params>;
-    using internode_type = Masstree::internode<table_params>;
+  using Str = Masstree::Str;
+  using table_type = Masstree::basic_table<table_params>;
+  using unlocked_cursor_type = Masstree::unlocked_tcursor<table_params>;
+  using cursor_type = Masstree::tcursor<table_params>;
+  using leaf_type = Masstree::leaf<table_params>;
+  using internode_type = Masstree::internode<table_params>;
 
-    using node_type = typename table_type::node_type;
-    using nodeversion_value_type = typename unlocked_cursor_type::nodeversion_value_type;
+  using node_type = typename table_type::node_type;
+  using nodeversion_value_type =
+      typename unlocked_cursor_type::nodeversion_value_type;
 
-    static __thread typename table_params::threadinfo_type *ti;
+  static __thread typename table_params::threadinfo_type *ti;
 
-    MasstreeWrapper() {
-        this->table_init();
+  MasstreeWrapper() { this->table_init(); }
+
+  void table_init() {
+    if (ti == nullptr)
+      ti = threadinfo::make(threadinfo::TI_MAIN, -1);
+    table_.initialize(*ti);
+  }
+
+  static void thread_init(int thread_id) {
+    if (ti == nullptr)
+      ti = threadinfo::make(threadinfo::TI_PROCESS, thread_id);
+  }
+
+  bool insert_value(const char *key, std::size_t len_key, T *value) {
+    cursor_type lp(table_, key, len_key);
+    bool found = lp.find_insert(*ti);
+
+    if (found) {
+      lp.finish(0, *ti); // release lock
+      return 0;          // not inserted
     }
 
-    void table_init() {
-        if (ti == nullptr)
-            ti = threadinfo::make(threadinfo::TI_MAIN, -1);
-        table_.initialize(*ti);
+    lp.value() = value;
+    fence();
+    lp.finish(1, *ti); // finish insert
+    return 1;          // inserted
+  }
+
+  bool insert_value(std::string_view key, T *value) {
+    return insert_value(key.data(), key.size(), value);
+  }
+
+  bool update_value(const char *key, std::size_t len_key, T *value) {
+    cursor_type lp(table_, key, len_key);
+    bool found =
+        lp.find_locked(*ti); // lock a node which potentailly contains the value
+
+    if (found) {
+      lp.value() = value;
+      fence();
+      lp.finish(0, *ti); // release lock
+      return 1;          // updated
     }
 
-    static void thread_init(int thread_id) {
-        if (ti == nullptr)
-            ti = threadinfo::make(threadinfo::TI_PROCESS, thread_id);
+    lp.finish(0, *ti); // release lock
+    return 0;          // not updated
+  }
+
+  bool update_value(std::string_view key, T *value) {
+    return update_value(key.data(), key.size(), value);
+  }
+
+  bool remove_value(const char *key, std::size_t len_key) {
+    cursor_type lp(table_, key, len_key);
+    bool found =
+        lp.find_locked(*ti); // lock a node which potentailly contains the value
+
+    if (found) {
+      lp.finish(-1, *ti); // finish remove
+      return 1;           // removed
     }
 
-    bool insert_value(const char* key, std::size_t len_key, T* value) {
-        cursor_type lp(table_, key, len_key);
-        bool found = lp.find_insert(*ti);
+    lp.finish(0, *ti); // release lock
+    return 0;          // not removed
+  }
 
-        if (found) {
-            lp.finish(0, *ti); // release lock
-            return 0; // not inserted
-        }
+  bool remove_value(std::string_view key) {
+    return remove_value(key.data(), key.size());
+  }
 
-        lp.value() = value;
-        fence();
-        lp.finish(1, *ti); // finish insert
-        return 1; // inserted
+  const T *get_value(const char *key, std::size_t len_key) {
+    unlocked_cursor_type lp(table_, key, len_key);
+    bool found = lp.find_unlocked(*ti);
+    if (found) {
+      return lp.value();
+    }
+    return nullptr;
+  }
+
+  const T *get_value(std::string_view key) {
+    return get_value(key.data(), key.size());
+  }
+
+  class Callback {
+  public:
+    std::function<void(const leaf_type *, uint64_t)> per_node_func;
+    std::function<void(const Str &, const T *)> per_kv_func;
+  };
+  class SearchRangeScanner {
+  public:
+    SearchRangeScanner(const char *const rkey, const std::size_t len_rkey,
+                       const bool r_exclusive, Callback &callback,
+                       int64_t max_scan_num = -1)
+        : rkey_(rkey), len_rkey_(len_rkey), r_exclusive_(r_exclusive),
+          callback_(callback), max_scan_num_(max_scan_num) {}
+
+    template <typename ScanStackElt, typename Key>
+    void visit_leaf(const ScanStackElt &iter, const Key &key, threadinfo &) {
+      n_ = iter.node();
+      v_ = iter.full_version_value();
+      callback_.per_node_func(n_, v_);
     }
 
-    bool insert_value(std::string_view key, T *value) {
-        return insert_value(key.data(), key.size(), value);
+    bool visit_value(const Str key, T *val, threadinfo &) {
+      if (max_scan_num_ >= 0 && scan_num_cnt_ >= max_scan_num_) {
+        return false;
+      }
+      ++scan_num_cnt_;
+
+      // compare key with end key
+      const int res = memcmp(
+          rkey_, key.s, std::min(len_rkey_, static_cast<std::size_t>(key.len)));
+
+      bool endless_key = (rkey_ == nullptr);
+      bool smaller_than_end_key = (res > 0);
+      bool same_as_end_key_but_shorter =
+          ((res == 0) && (len_rkey_ > static_cast<std::size_t>(key.len)));
+      bool same_as_end_key_inclusive =
+          ((res == 0) && (len_rkey_ == static_cast<std::size_t>(key.len)) &&
+           (!r_exclusive_));
+
+      if (endless_key || smaller_than_end_key || same_as_end_key_but_shorter ||
+          same_as_end_key_inclusive) {
+        callback_.per_kv_func(key, val);
+        return true;
+      }
+
+      return false;
     }
 
-    bool update_value(const char* key, std::size_t len_key, T* value) {
-        cursor_type lp(table_, key, len_key);
-        bool found = lp.find_locked(*ti); // lock a node which potentailly contains the value
+  private:
+    const char *const rkey_{};
+    const std::size_t len_rkey_{};
+    const bool r_exclusive_{};
+    std::vector<const T *> scan_buffer_{};
+    Callback &callback_;
+    const bool limited_scan_{false};
+    std::size_t scan_num_cnt_ = 0;
+    const std::size_t max_scan_num_ = -1;
 
-        if (found) {
-            lp.value() = value;
-            fence();
-            lp.finish(0, *ti); // release lock
-            return 1; // updated
-        }
+    leaf_type *n_;
+    uint64_t v_;
+  };
 
-        lp.finish(0, *ti); // release lock
-        return 0; // not updated
+  void scan(const char *const lkey, const std::size_t len_lkey,
+            const bool l_exclusive, const char *const rkey,
+            const std::size_t len_rkey, const bool r_exclusive,
+            Callback &&callback) {
+    Str mtkey;
+    if (lkey == nullptr) {
+      mtkey = Str();
+    } else {
+      mtkey = Str(lkey, len_lkey);
     }
 
-    bool update_value(std::string_view key, T *value) {
-        return update_value(key.data(), key.size(), value);
-    }
-
-    bool remove_value(const char* key, std::size_t len_key) {
-        cursor_type lp(table_, key, len_key);
-        bool found = lp.find_locked(*ti); // lock a node which potentailly contains the value
-
-        if (found) {
-            lp.finish(-1, *ti); // finish remove
-            return 1; // removed
-        }
-
-        lp.finish(0, *ti); // release lock
-        return 0; // not removed
-    }
-
-    bool remove_value(std::string_view key) {
-        return remove_value(key.data(), key.size());
-    }
-
-    const T* get_value(const char* key, std::size_t len_key) {
-        unlocked_cursor_type lp(table_, key, len_key);
-        bool found = lp.find_unlocked(*ti);
-        if (found) {
-            return lp.value();
-        }
-        return nullptr;
-    }
-
-    const T* get_value(std::string_view key) {
-        return get_value(key.data(), key.size());
-    }
+    SearchRangeScanner scanner(rkey, len_rkey, r_exclusive, callback);
+    table_.scan(mtkey, l_exclusive, scanner, *ti);
+  }
 
 private:
-    table_type table_;
+  table_type table_;
 };
 
-template<typename T>
-__thread typename MasstreeWrapper<T>::table_params::threadinfo_type *
-        MasstreeWrapper<T>::ti = nullptr;
+template <typename T>
+__thread typename MasstreeWrapper<T>::table_params::threadinfo_type
+    *MasstreeWrapper<T>::ti = nullptr;
 #ifdef GLOBAL_VALUE_DEFINE
 volatile mrcu_epoch_type active_epoch = 1;
 volatile std::uint64_t globalepoch = 1;
