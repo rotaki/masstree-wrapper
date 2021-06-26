@@ -8,10 +8,10 @@ Currently it supports the following methods
 - insert
 - update
 - remove
-
+- scan
 # Build & Execute
 
-The following code will fetch the latest masstree-beta and executes the tests of wrapper. Some warnings might show up during the build but they are the problems caused by compiling masstree-beta with cmake.
+The following code will fetch the latest masstree-beta and executes some tests for the wrapper. Some warnings might show up during the build due to the compilation of masstree-beta using cmake.
 
 ```sh
 mkdir build
