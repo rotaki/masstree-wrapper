@@ -150,11 +150,17 @@ public:
       }
       ++scan_num_cnt_;
 
+      bool endless_key = (rkey_ == nullptr);
+
+      if (endless_key) {
+        callback_.per_kv_func(key, val);
+        return true;
+      }
+
       // compare key with end key
       const int res = memcmp(
           rkey_, key.s, std::min(len_rkey_, static_cast<std::size_t>(key.len)));
 
-      bool endless_key = (rkey_ == nullptr);
       bool smaller_than_end_key = (res > 0);
       bool same_as_end_key_but_shorter =
           ((res == 0) && (len_rkey_ > static_cast<std::size_t>(key.len)));
@@ -162,7 +168,7 @@ public:
           ((res == 0) && (len_rkey_ == static_cast<std::size_t>(key.len)) &&
            (!r_exclusive_));
 
-      if (endless_key || smaller_than_end_key || same_as_end_key_but_shorter ||
+      if (smaller_than_end_key || same_as_end_key_but_shorter ||
           same_as_end_key_inclusive) {
         callback_.per_kv_func(key, val);
         return true;
@@ -188,7 +194,8 @@ public:
   void scan(const char *const lkey, const std::size_t len_lkey,
             const bool l_exclusive, const char *const rkey,
             const std::size_t len_rkey, const bool r_exclusive,
-            Callback &&callback) {
+            Callback &&callback, int64_t max_scan_num = -1) {
+
     Str mtkey;
     if (lkey == nullptr) {
       mtkey = Str();
@@ -196,7 +203,8 @@ public:
       mtkey = Str(lkey, len_lkey);
     }
 
-    SearchRangeScanner scanner(rkey, len_rkey, r_exclusive, callback);
+    SearchRangeScanner scanner(rkey, len_rkey, r_exclusive, callback,
+                               max_scan_num);
     table_.scan(mtkey, l_exclusive, scanner, *ti);
   }
 

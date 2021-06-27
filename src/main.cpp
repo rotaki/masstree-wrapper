@@ -37,7 +37,7 @@ bool remove_value(MT *mt, KeyType key) {
   return mt->remove_value(reinterpret_cast<char *>(&key_buf), sizeof(key_buf));
 }
 
-void scan_values(MT *mt, KeyType l_key, KeyType r_key) {
+void scan_values(MT *mt, KeyType l_key, KeyType r_key, int64_t count = -1) {
   KeyType l_key_buf{__builtin_bswap64(l_key)};
   KeyType r_key_buf{__builtin_bswap64(r_key)};
 
@@ -60,7 +60,8 @@ void scan_values(MT *mt, KeyType l_key, KeyType r_key) {
               (void)key;
               (void)val;
               return;
-            }});
+            }},
+           count);
 
   printf("n_cnt: %ld\n", n_cnt);
   printf("v_cnt: %ld\n", v_cnt);
@@ -110,8 +111,8 @@ void run_remove(MT *mt) {
 
 void run_scan(MT *mt) {
   KeyType l_key = 0;
-  KeyType r_key = max_key;
-  scan_values(mt, l_key, r_key);
+  KeyType r_key = 100;
+  scan_values(mt, l_key, r_key, 20);
 }
 
 void test_thread(MT *mt, std::size_t thid) {
