@@ -69,10 +69,6 @@ public:
     return 1;          // inserted
   }
 
-  bool insert_value(std::string_view key, T *value) {
-    return insert_value(key.data(), key.size(), value);
-  }
-
   bool update_value(const char *key, std::size_t len_key, T *value) {
     cursor_type lp(table_, key, len_key);
     bool found =
@@ -89,10 +85,6 @@ public:
     return 0;          // not updated
   }
 
-  bool update_value(std::string_view key, T *value) {
-    return update_value(key.data(), key.size(), value);
-  }
-
   bool remove_value(const char *key, std::size_t len_key) {
     cursor_type lp(table_, key, len_key);
     bool found =
@@ -107,10 +99,6 @@ public:
     return 0;          // not removed
   }
 
-  bool remove_value(std::string_view key) {
-    return remove_value(key.data(), key.size());
-  }
-
   const T *get_value(const char *key, std::size_t len_key) {
     unlocked_cursor_type lp(table_, key, len_key);
     bool found = lp.find_unlocked(*ti);
@@ -119,11 +107,6 @@ public:
     }
     return nullptr;
   }
-
-  const T *get_value(std::string_view key) {
-    return get_value(key.data(), key.size());
-  }
-
   class Callback {
   public:
     std::function<void(const leaf_type *, uint64_t)> per_node_func;
