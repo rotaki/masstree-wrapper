@@ -188,7 +188,84 @@ public:
 
     SearchRangeScanner scanner(rkey, len_rkey, r_exclusive, callback,
                                max_scan_num);
-    table_.scan(mtkey, l_exclusive, scanner, *ti);
+    table_.scan(mtkey, !l_exclusive, scanner, *ti);
+  }
+
+  class BackwordScanner {
+  public:
+    BackwordScanner(const char *const lkey, const std::size_t len_lkey,
+                    const bool l_exclusive, Callback &callback,
+                    int64_t max_scan_num = -1)
+        : lkey_(lkey), len_lkey_(len_lkey), l_exclusive_(l_exclusive),
+          callback_(callback), max_scan_num_(max_scan_num) {}
+
+    template <typename ScanStackElt, typename Key>
+    void visit_leaf(const ScanStackElt &iter, const Key &key, threadinfo &) {
+      n_ = iter.node();
+      v_ = iter.full_version_value();
+      callback_.per_node_func(n_, v_);
+    }
+
+    bool visit_value(const Str key, T *val, threadinfo &) {
+      if (max_scan_num_ >= 0 && scan_num_cnt_ >= max_scan_num_) {
+        return false;
+      }
+      ++scan_num_cnt_;
+
+      bool endless_key = (lkey_ == nullptr);
+
+      if (endless_key) {
+        callback_.per_kv_func(key, val);
+        return true;
+      }
+
+      // compare key with end key
+      const int res = memcmp(
+          lkey_, key.s, std::min(len_lkey_, static_cast<std::size_t>(key.len)));
+
+      bool bigger_than_end_key = (res < 0);
+      bool same_as_end_key_but_longer =
+          ((res == 0) && (len_lkey_ < static_cast<std::size_t>(key.len)));
+      bool same_as_end_key_inclusive =
+          ((res == 0) && (len_lkey_ == static_cast<std::size_t>(key.len)) &&
+           (!l_exclusive_));
+
+      if (bigger_than_end_key || same_as_end_key_but_longer ||
+          same_as_end_key_inclusive) {
+        callback_.per_kv_func(key, val);
+        return true;
+      }
+
+      return false;
+    }
+
+  private:
+    const char *const lkey_{};
+    const std::size_t len_lkey_{};
+    const bool l_exclusive_{};
+    std::vector<const T *> scan_buffer_{};
+    Callback &callback_;
+    std::size_t scan_num_cnt_ = 0;
+    const std::size_t max_scan_num_ = -1;
+
+    leaf_type *n_;
+    uint64_t v_;
+  };
+
+  void rscan(const char *const lkey, const std::size_t len_lkey,
+             const bool l_exclusive, const char *const rkey,
+             const std::size_t len_rkey, const bool r_exclusive,
+             Callback &&callback, int64_t max_scan_num = -1) {
+    Str mtkey;
+    if (lkey == nullptr) {
+      mtkey = Str();
+    } else {
+      mtkey = Str(rkey, len_rkey);
+    }
+
+    BackwordScanner scanner(lkey, len_lkey, l_exclusive, callback,
+                            max_scan_num);
+    table_.rscan(mtkey, !r_exclusive, scanner, *ti);
   }
 
 private:
