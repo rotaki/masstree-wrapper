@@ -40,6 +40,11 @@ public:
       typename unlocked_cursor_type::nodeversion_value_type;
 
   static __thread typename table_params::threadinfo_type *ti;
+  struct node_info_t {
+    const node_type *node = nullptr;
+    uint64_t old_version = 0;
+    uint64_t new_version = 0;
+  };
 
   MasstreeWrapper() { this->table_init(); }
 
@@ -69,6 +74,47 @@ public:
     return 1;          // inserted
   }
 
+  bool insert_value_and_get_nodeinfo_on_success(const char *key,
+                                                std::size_t len_key, T *value,
+                                                node_info_t &node_info) {
+    cursor_type lp(table_, key, len_key);
+    bool found = lp.find_insert(*ti);
+    if (found) {
+      lp.finish(0, *ti);
+      return 0;
+    }
+    // node info is only obtained on success of insert
+    node_info.node = lp.node();
+    node_info.old_version = lp.previous_full_version_value();
+    node_info.new_version = lp.next_full_version_value(1);
+    lp.value() = value;
+    fence();
+    lp.finish(1, *ti);
+    return 1;
+  }
+
+  T *get_value(const char *key, std::size_t len_key) {
+    unlocked_cursor_type lp(table_, key, len_key);
+    bool found = lp.find_unlocked(*ti);
+    if (found)
+      return lp.value();
+    return nullptr;
+  }
+
+  T *get_value_and_get_nodeinfo_on_failure(const char *key, std::size_t len_key,
+                                           node_info_t &node_info) {
+    unlocked_cursor_type lp(table_, key, len_key);
+    bool found = lp.find_unlocked(*ti);
+    if (found)
+      return lp.value();
+    // node info is only obtained on failure of lookup
+    node_info.node = lp.node();
+    node_info.old_version = lp.full_version_value();
+    node_info.new_version =
+        node_info.old_version; // version will not change with lookup
+    return nullptr;
+  }
+
   bool update_value(const char *key, std::size_t len_key, T *value) {
     cursor_type lp(table_, key, len_key);
     bool found =
@@ -77,10 +123,33 @@ public:
     if (found) {
       lp.value() = value;
       fence();
+      assert(lp.previous_full_version_value() == lp.next_full_version_value(0));
       lp.finish(0, *ti); // release lock
       return 1;          // updated
     }
+    lp.finish(0, *ti); // release lock
+    return 0;          // not updated
+  }
 
+  bool update_value_and_get_nodeinfo_on_failure(const char *key,
+                                                std::size_t len_key, T *value,
+                                                node_info_t &node_info) {
+    cursor_type lp(table_, key, len_key);
+    bool found =
+        lp.find_locked(*ti); // lock a node which potentailly contains the value
+
+    if (found) {
+      lp.value() = value;
+      fence();
+      assert(lp.previous_full_version_value() == lp.next_full_version_value(0));
+      lp.finish(0, *ti); // release lock
+      return 1;          // updated
+    }
+    // node info is only obtained on failure of lookup
+    node_info.node = lp.node();
+    node_info.old_version = lp.previous_full_version_value();
+    node_info.new_version = lp.next_full_version_value(0);
+    assert(node_info.old_version == node_info.new_version);
     lp.finish(0, *ti); // release lock
     return 0;          // not updated
   }
@@ -95,18 +164,31 @@ public:
       return 1;           // removed
     }
 
+    assert(lp.previous_full_version_value() == lp.next_full_version_value(0));
     lp.finish(0, *ti); // release lock
     return 0;          // not removed
   }
 
-  const T *get_value(const char *key, std::size_t len_key) {
-    unlocked_cursor_type lp(table_, key, len_key);
-    bool found = lp.find_unlocked(*ti);
+  bool remove_value_and_get_nodeinfo_on_failure(const char *key,
+                                                std::size_t len_key,
+                                                node_info_t &node_info) {
+    cursor_type lp(table_, key, len_key);
+    bool found =
+        lp.find_locked(*ti); // lock a node which potentailly contains the value
+
     if (found) {
-      return lp.value();
+      lp.finish(-1, *ti); // finish remove
+      return 1;           // removed
     }
-    return nullptr;
+    // node version is only obtained on failure of delete
+    node_info.node = lp.node();
+    node_info.old_version = lp.previous_full_version_value();
+    node_info.new_version = lp.next_full_version_value(0);
+    assert(node_info.old_version == node_info.new_version);
+    lp.finish(0, *ti); // release lock
+    return 0;          // not removed
   }
+
   class Callback {
   public:
     std::function<void(const leaf_type *, uint64_t)> per_node_func;
@@ -122,6 +204,7 @@ public:
 
     template <typename ScanStackElt, typename Key>
     void visit_leaf(const ScanStackElt &iter, const Key &key, threadinfo &) {
+      (void)key;
       n_ = iter.node();
       v_ = iter.full_version_value();
       callback_.per_node_func(n_, v_);
@@ -167,8 +250,8 @@ public:
     std::vector<const T *> scan_buffer_{};
     Callback &callback_;
     const bool limited_scan_{false};
-    std::size_t scan_num_cnt_ = 0;
-    const std::size_t max_scan_num_ = -1;
+    int64_t scan_num_cnt_ = 0;
+    int64_t max_scan_num_ = -1;
 
     leaf_type *n_;
     uint64_t v_;
@@ -179,12 +262,7 @@ public:
             const std::size_t len_rkey, const bool r_exclusive,
             Callback &&callback, int64_t max_scan_num = -1) {
 
-    Str mtkey;
-    if (lkey == nullptr) {
-      mtkey = Str();
-    } else {
-      mtkey = Str(lkey, len_lkey);
-    }
+    Str mtkey = (lkey == nullptr ? Str() : Str(lkey, len_lkey));
 
     SearchRangeScanner scanner(rkey, len_rkey, r_exclusive, callback,
                                max_scan_num);
@@ -201,6 +279,7 @@ public:
 
     template <typename ScanStackElt, typename Key>
     void visit_leaf(const ScanStackElt &iter, const Key &key, threadinfo &) {
+      (void)key;
       n_ = iter.node();
       v_ = iter.full_version_value();
       callback_.per_node_func(n_, v_);
@@ -245,8 +324,8 @@ public:
     const bool l_exclusive_{};
     std::vector<const T *> scan_buffer_{};
     Callback &callback_;
-    std::size_t scan_num_cnt_ = 0;
-    const std::size_t max_scan_num_ = -1;
+    int64_t scan_num_cnt_ = 0;
+    int64_t max_scan_num_ = -1;
 
     leaf_type *n_;
     uint64_t v_;
@@ -256,16 +335,15 @@ public:
              const bool l_exclusive, const char *const rkey,
              const std::size_t len_rkey, const bool r_exclusive,
              Callback &&callback, int64_t max_scan_num = -1) {
-    Str mtkey;
-    if (lkey == nullptr) {
-      mtkey = Str();
-    } else {
-      mtkey = Str(rkey, len_rkey);
-    }
+    Str mtkey = (lkey == nullptr ? Str() : Str(rkey, len_rkey));
 
     BackwordScanner scanner(lkey, len_lkey, l_exclusive, callback,
                             max_scan_num);
     table_.rscan(mtkey, !r_exclusive, scanner, *ti);
+  }
+
+  uint64_t get_version_value(const node_type *n) {
+    return n->full_version_value();
   }
 
 private:

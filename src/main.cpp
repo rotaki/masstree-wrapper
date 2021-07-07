@@ -134,8 +134,7 @@ void run_remove(MT *mt) {
   bool removed = 0;
   while (true) {
     current_key = fetch_and_add(&remove_key, 1);
-    if (current_key % 10000 == 0)
-      printf("remove key: %ld\n", current_key);
+    printf("remove key: %ld\n", current_key);
     if (current_key > max_key)
       break;
     removed = remove_value(mt, current_key);
@@ -150,8 +149,8 @@ void run_scan(MT *mt) {
 }
 
 void run_rscan(MT *mt) {
-  KeyType l_key = 0;
-  KeyType r_key = 100;
+  KeyType l_key = 301;
+  KeyType r_key = 500;
   rscan_values(mt, l_key, r_key, 20);
 }
 
@@ -159,16 +158,16 @@ void test_thread(MT *mt, std::size_t thid) {
   mt->thread_init(thid);
   run_insert(mt);
   sleep(1);
-  run_rscan(mt);
+  // run_rscan(mt);
   // run_update(mt);
   // sleep(1);
-  // run_remove(mt);
+  run_remove(mt);
 }
 
 int main() {
   std::size_t n_cores = std::thread::hardware_concurrency();
-  // std::size_t n_threads = std::max(std::size_t{1}, n_cores);
-  std::size_t n_threads = 1;
+  std::size_t n_threads = std::max(std::size_t{1}, n_cores);
+  // std::size_t n_threads = 1;
   printf("n_threads: %ld\n", n_threads);
 
   MT mt;
@@ -176,7 +175,7 @@ int main() {
   std::vector<std::thread> threads;
   threads.reserve(n_threads);
 
-  for (int i = 0; i < n_threads; i++) {
+  for (size_t i = 0; i < n_threads; i++) {
     threads.emplace_back(test_thread, &mt, i);
   }
 
