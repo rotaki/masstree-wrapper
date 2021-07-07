@@ -47,23 +47,27 @@ void scan_values(MT *mt, KeyType l_key, KeyType r_key, int64_t count = -1) {
   uint64_t n_cnt = 0;
   uint64_t v_cnt = 0;
 
-  mt->scan(reinterpret_cast<char *>(&l_key_buf), sizeof(l_key_buf), l_exclusive,
-           reinterpret_cast<char *>(&r_key_buf), sizeof(r_key_buf), r_exclusive,
-           {[&n_cnt](const MT::leaf_type *leaf, uint64_t version) {
-              n_cnt++;
-              (void)leaf;
-              (void)version;
-              return;
-            },
-            [&v_cnt](const MT::Str &key, const ValueType *val) {
-              v_cnt++;
-              KeyType actual_key{__builtin_bswap64(
-                  *(reinterpret_cast<const uint64_t *>(key.s)))};
-              printf("scanned key: %lu\n", actual_key);
-              (void)val;
-              return;
-            }},
-           count);
+  mt->scan(
+      reinterpret_cast<char *>(&l_key_buf), sizeof(l_key_buf), l_exclusive,
+      reinterpret_cast<char *>(&r_key_buf), sizeof(r_key_buf), r_exclusive,
+      {[&n_cnt](const MT::leaf_type *leaf, uint64_t version,
+                bool &continue_flag) {
+         n_cnt++;
+         (void)leaf;
+         (void)version;
+         (void)continue_flag;
+         return;
+       },
+       [&v_cnt](const MT::Str &key, const ValueType *val, bool &continue_flag) {
+         v_cnt++;
+         KeyType actual_key{
+             __builtin_bswap64(*(reinterpret_cast<const uint64_t *>(key.s)))};
+         printf("scanned key: %lu\n", actual_key);
+         (void)val;
+         (void)continue_flag;
+         return;
+       }},
+      count);
 
   printf("n_cnt: %ld\n", n_cnt);
   printf("v_cnt: %ld\n", v_cnt);
@@ -79,24 +83,27 @@ void rscan_values(MT *mt, KeyType l_key, KeyType r_key, int64_t count = -1) {
   uint64_t n_cnt = 0;
   uint64_t v_cnt = 0;
 
-  mt->rscan(reinterpret_cast<char *>(&l_key_buf), sizeof(l_key_buf),
-            l_exclusive, reinterpret_cast<char *>(&r_key_buf),
-            sizeof(r_key_buf), r_exclusive,
-            {[&n_cnt](const MT::leaf_type *leaf, uint64_t version) {
-               n_cnt++;
-               (void)leaf;
-               (void)version;
-               return;
-             },
-             [&v_cnt](const MT::Str &key, const ValueType *val) {
-               v_cnt++;
-               KeyType actual_key{__builtin_bswap64(
-                   *(reinterpret_cast<const uint64_t *>(key.s)))};
-               printf("rscanned key: %lu\n", actual_key);
-               (void)val;
-               return;
-             }},
-            count);
+  mt->rscan(
+      reinterpret_cast<char *>(&l_key_buf), sizeof(l_key_buf), l_exclusive,
+      reinterpret_cast<char *>(&r_key_buf), sizeof(r_key_buf), r_exclusive,
+      {[&n_cnt](const MT::leaf_type *leaf, uint64_t version,
+                bool &continue_flag) {
+         n_cnt++;
+         (void)leaf;
+         (void)version;
+         (void)continue_flag;
+         return;
+       },
+       [&v_cnt](const MT::Str &key, const ValueType *val, bool &continue_flag) {
+         v_cnt++;
+         KeyType actual_key{
+             __builtin_bswap64(*(reinterpret_cast<const uint64_t *>(key.s)))};
+         printf("rscanned key: %lu\n", actual_key);
+         (void)val;
+         (void)continue_flag;
+         return;
+       }},
+      count);
 
   printf("n_cnt: %ld\n", n_cnt);
   printf("v_cnt: %ld\n", v_cnt);

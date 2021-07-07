@@ -191,8 +191,8 @@ public:
 
   class Callback {
   public:
-    std::function<void(const leaf_type *, uint64_t)> per_node_func;
-    std::function<void(const Str &, const T *)> per_kv_func;
+    std::function<void(const leaf_type *, uint64_t, bool &)> per_node_func;
+    std::function<void(const Str &, const T *, bool &)> per_kv_func;
   };
   class SearchRangeScanner {
   public:
@@ -205,13 +205,13 @@ public:
     template <typename ScanStackElt, typename Key>
     void visit_leaf(const ScanStackElt &iter, const Key &key, threadinfo &) {
       (void)key;
-      n_ = iter.node();
-      v_ = iter.full_version_value();
-      callback_.per_node_func(n_, v_);
+      callback_.per_node_func(iter.node(), iter.full_version_value(),
+                              continue_flag);
     }
 
     bool visit_value(const Str key, T *val, threadinfo &) {
-      if (max_scan_num_ >= 0 && scan_num_cnt_ >= max_scan_num_) {
+      if (!continue_flag ||
+          (max_scan_num_ >= 0 && scan_num_cnt_ >= max_scan_num_)) {
         return false;
       }
       ++scan_num_cnt_;
@@ -219,7 +219,7 @@ public:
       bool endless_key = (rkey_ == nullptr);
 
       if (endless_key) {
-        callback_.per_kv_func(key, val);
+        callback_.per_kv_func(key, val, continue_flag);
         return true;
       }
 
@@ -236,7 +236,7 @@ public:
 
       if (smaller_than_end_key || same_as_end_key_but_shorter ||
           same_as_end_key_inclusive) {
-        callback_.per_kv_func(key, val);
+        callback_.per_kv_func(key, val, continue_flag);
         return true;
       }
 
@@ -253,8 +253,7 @@ public:
     int64_t scan_num_cnt_ = 0;
     int64_t max_scan_num_ = -1;
 
-    leaf_type *n_;
-    uint64_t v_;
+    bool continue_flag = true;
   };
 
   void scan(const char *const lkey, const std::size_t len_lkey,
@@ -280,13 +279,13 @@ public:
     template <typename ScanStackElt, typename Key>
     void visit_leaf(const ScanStackElt &iter, const Key &key, threadinfo &) {
       (void)key;
-      n_ = iter.node();
-      v_ = iter.full_version_value();
-      callback_.per_node_func(n_, v_);
+      callback_.per_node_func(iter.node(), iter.full_version_value(),
+                              continue_flag);
     }
 
     bool visit_value(const Str key, T *val, threadinfo &) {
-      if (max_scan_num_ >= 0 && scan_num_cnt_ >= max_scan_num_) {
+      if (!continue_flag ||
+          (max_scan_num_ >= 0 && scan_num_cnt_ >= max_scan_num_)) {
         return false;
       }
       ++scan_num_cnt_;
@@ -294,7 +293,7 @@ public:
       bool endless_key = (lkey_ == nullptr);
 
       if (endless_key) {
-        callback_.per_kv_func(key, val);
+        callback_.per_kv_func(key, val, continue_flag);
         return true;
       }
 
@@ -311,7 +310,7 @@ public:
 
       if (bigger_than_end_key || same_as_end_key_but_longer ||
           same_as_end_key_inclusive) {
-        callback_.per_kv_func(key, val);
+        callback_.per_kv_func(key, val, continue_flag);
         return true;
       }
 
@@ -327,8 +326,7 @@ public:
     int64_t scan_num_cnt_ = 0;
     int64_t max_scan_num_ = -1;
 
-    leaf_type *n_;
-    uint64_t v_;
+    bool continue_flag = true;
   };
 
   void rscan(const char *const lkey, const std::size_t len_lkey,

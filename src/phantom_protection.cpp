@@ -60,38 +60,36 @@ void scan_values_with_nodeinfo(MT *mt, KeyType l_key, KeyType r_key,
   uint64_t v_cnt = 0;
 
   bool exception_caught = false;
-  try {
-    mt->scan(reinterpret_cast<char *>(&l_key_buf), sizeof(l_key_buf),
-             l_exclusive, reinterpret_cast<char *>(&r_key_buf),
-             sizeof(r_key_buf), r_exclusive,
-             {[&n_cnt, &node_map](const MT::leaf_type *leaf, uint64_t version) {
-                auto it = node_map.find(leaf);
-                if (it == node_map.end())
-                  node_map.emplace_hint(it, leaf, version);
-                else if (it->second != version)
-                  throw std::runtime_error("scan failed");
-                n_cnt++;
-                return;
-              },
-              [&v_cnt](const MT::Str &key, const ValueType *val) {
-                v_cnt++;
-                // KeyType actual_key{__builtin_bswap64(*(reinterpret_cast<const
-                // uint64_t *>(key.s)))}; printf("scanned key: %lu\n",
-                // actual_key);
-                (void)key;
-                (void)val;
-                return;
-              }},
-             count);
-  } catch (const std::exception &c) {
-    exception_caught = true;
-    std::cout << c.what() << std::endl;
-    printf("ABORT\n");
-  }
 
-  if (!exception_caught)
-    printf("SUCCESS\n");
+  mt->scan(
+      reinterpret_cast<char *>(&l_key_buf), sizeof(l_key_buf), l_exclusive,
+      reinterpret_cast<char *>(&r_key_buf), sizeof(r_key_buf), r_exclusive,
+      {[&n_cnt, &node_map, &exception_caught](
+           const MT::leaf_type *leaf, uint64_t version, bool &continue_flag) {
+         auto it = node_map.find(leaf);
+         if (it == node_map.end())
+           node_map.emplace_hint(it, leaf, version);
+         else if (it->second != version) {
+           exception_caught = true;
+           continue_flag = false;
+         }
 
+         n_cnt++;
+         return;
+       },
+       [&v_cnt](const MT::Str &key, const ValueType *val, bool &continue_flag) {
+         v_cnt++;
+         // KeyType actual_key{__builtin_bswap64(*(reinterpret_cast<const
+         // uint64_t *>(key.s)))}; printf("scanned key: %lu\n",
+         // actual_key);
+         (void)key;
+         (void)val;
+         (void)continue_flag;
+         return;
+       }},
+      count);
+
+  printf(exception_caught ? "ABORT\n" : "SUCCESS\n");
   printf("  scan n_cnt: %ld\n", n_cnt);
   printf("  scan v_cnt: %ld\n", v_cnt);
 }
@@ -108,37 +106,32 @@ void rscan_values(MT *mt, KeyType l_key, KeyType r_key, int64_t count,
   uint64_t v_cnt = 0;
 
   bool exception_caught = false;
-  try {
-    mt->rscan(
-        reinterpret_cast<char *>(&l_key_buf), sizeof(l_key_buf), l_exclusive,
-        reinterpret_cast<char *>(&r_key_buf), sizeof(r_key_buf), r_exclusive,
-        {[&n_cnt, &node_map](const MT::leaf_type *leaf, uint64_t version) {
-           n_cnt++;
-           auto it = node_map.find(leaf);
-           if (it == node_map.end())
-             node_map.emplace_hint(it, leaf, version);
-           else if (it->second != version)
-             throw std::runtime_error("rscan failed");
-           return;
-         },
-         [&v_cnt](const MT::Str &key, const ValueType *val) {
-           v_cnt++;
-           // KeyType actual_key{__builtin_bswap64(*(reinterpret_cast<const
-           // uint64_t *>(key.s)))}; printf("rscanned key: %lu\n", actual_key);
-           (void)key;
-           (void)val;
-           return;
-         }},
-        count);
-  } catch (const std::exception &c) {
-    exception_caught = true;
-    std::cout << c.what() << std::endl;
-    printf("ABORT\n");
-  }
+  mt->rscan(
+      reinterpret_cast<char *>(&l_key_buf), sizeof(l_key_buf), l_exclusive,
+      reinterpret_cast<char *>(&r_key_buf), sizeof(r_key_buf), r_exclusive,
+      {[&n_cnt, &node_map, &exception_caught](
+           const MT::leaf_type *leaf, uint64_t version, bool &continue_flag) {
+         n_cnt++;
+         auto it = node_map.find(leaf);
+         if (it == node_map.end())
+           node_map.emplace_hint(it, leaf, version);
+         else if (it->second != version) {
+           exception_caught = true;
+           continue_flag = false;
+         }
+         return;
+       },
+       [&v_cnt](const MT::Str &key, const ValueType *val, bool &continue_flag) {
+         v_cnt++;
+         // KeyType actual_key{__builtin_bswap64(*(reinterpret_cast<const
+         // uint64_t *>(key.s)))}; printf("rscanned key: %lu\n", actual_key);
+         (void)key;
+         (void)val;
+         return;
+       }},
+      count);
 
-  if (!exception_caught)
-    printf("SUCCESS\n");
-
+  printf(exception_caught ? "ABORT\n" : "SUCCESS\n");
   printf("  rscan n_cnt: %ld\n", n_cnt);
   printf("  rscan v_cnt: %ld\n", v_cnt);
 }
@@ -219,6 +212,6 @@ void scan_update_scan_test() {
 }
 
 int main() {
-  // scan_insert_scan_test();
-  scan_update_scan_test();
+  scan_insert_scan_test();
+  // scan_update_scan_test();
 }
