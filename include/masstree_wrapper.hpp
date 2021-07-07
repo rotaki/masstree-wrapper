@@ -1,7 +1,7 @@
 #pragma once
 
 #include "masstree/config.h"
-
+// DO NOT REORDER (config.h needs to be included before other headers)
 #include "masstree/compiler.hh"
 #include "masstree/kvthread.hh"
 #include "masstree/masstree.hh"
