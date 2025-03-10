@@ -351,12 +351,21 @@ private:
 template <typename T>
 __thread typename MasstreeWrapper<T>::table_params::threadinfo_type
     *MasstreeWrapper<T>::ti = nullptr;
+// #ifdef GLOBAL_VALUE_DEFINE
+// volatile mrcu_epoch_type active_epoch = 1;
+// volatile std::uint64_t globalepoch = 1;
+// volatile bool recovering = false;
+// #else
+// extern volatile mrcu_epoch_type active_epoch;
+// extern volatile std::uint64_t globalepoch;
+// extern volatile bool recovering;
+// #endif
 #ifdef GLOBAL_VALUE_DEFINE
-volatile mrcu_epoch_type active_epoch = 1;
-volatile std::uint64_t globalepoch = 1;
+relaxed_atomic<mrcu_epoch_type> active_epoch{1};
+relaxed_atomic<mrcu_epoch_type> globalepoch{1};
 volatile bool recovering = false;
 #else
-extern volatile mrcu_epoch_type active_epoch;
-extern volatile std::uint64_t globalepoch;
+extern relaxed_atomic<mrcu_epoch_type> active_epoch;
+extern relaxed_atomic<mrcu_epoch_type> globalepoch;
 extern volatile bool recovering;
 #endif
